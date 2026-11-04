@@ -82,15 +82,16 @@ def load_candidate(strategy_id: str, requested_bar: str) -> dict[str, Any]:
     if candidate.get("direction") != "long":
         raise ValueError("Only BUY / long strategies can be monitored.")
     actual_bar = str(candidate.get("bar", ""))
-    if actual_bar != requested_bar:
+    if requested_bar != "AUTO" and actual_bar != requested_bar:
         raise ValueError(
             f"Timeframe mismatch: this strategy belongs to {actual_bar}, "
-            f"but the workflow was started with {requested_bar}. Select the matching timeframe."
+            f"but the workflow was started with {requested_bar}. Select AUTO or the matching timeframe."
         )
     if not candidate.get("features"):
         raise ValueError("The selected strategy has no saved feature definition.")
     return {
         "id": strategy_id,
+        "bar": actual_bar,
         "candidate": candidate,
         "holding_bars": int(candidate.get("holding_bars", 0)),
         "threshold": float(candidate.get("threshold", 0.0)),
@@ -344,12 +345,13 @@ def process_tick(state: dict[str, Any], frame: pd.DataFrame, price: float,
 
 def run_monitor(strategy_choice: str, bar: str, inst_id: str) -> None:
     strategy_id = strategy_id_from_choice(strategy_choice)
-    if bar not in SUPPORTED_BARS:
+    if bar != "AUTO" and bar not in SUPPORTED_BARS:
         raise ValueError(f"Unsupported timeframe {bar}.")
     inst_id = inst_id.strip().upper()
     if not re.fullmatch(r"[A-Z0-9]+-USDT", inst_id):
         raise ValueError("Instrument must be an OKX Spot USDT pair, e.g. SOL-USDT.")
     strategy = load_candidate(strategy_id, bar)
+    bar = strategy["bar"]
     strategy_name = strategy_choice.split(" — ", 1)[-1].strip() if " — " in strategy_choice else strategy_id
     state = start_or_resume_state(read_state(), strategy, strategy_name, inst_id, bar)
     save_state(state)
