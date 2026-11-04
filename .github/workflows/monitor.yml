@@ -38,11 +38,12 @@ on:
           - "b241d282523d — SOL USDT Buy · EMA + EMA · b241d282523d · 4H"
           - "59c1d61c44c3 — SOL USDT Buy · EMA + SMA · 59c1d61c44c3 · 4H"
       bar:
-        description: "Must match the timeframe shown in the strategy name"
+        description: "AUTO uses the strategy timeframe shown in its name"
         required: false
         type: choice
-        default: "4H"
+        default: "AUTO"
         options:
+          - "AUTO"
           - "5m"
           - "15m"
           - "30m"
