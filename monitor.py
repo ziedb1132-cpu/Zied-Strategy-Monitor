@@ -68,7 +68,7 @@ def http_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
 def resolve_strategy_choice(choice: str) -> dict[str, Any]:
     """Resolve a live rank slot against the latest HTML-equivalent top-20 list."""
     value = (choice or "").strip()
-    rank_match = re.fullmatch(r"TOP[_-]?(\\d{1,2})", value, re.I)
+    rank_match = re.fullmatch(r"TOP[_-]?(\d{1,2})", value, re.I)
     if rank_match:
         rank = int(rank_match.group(1))
         if not 1 <= rank <= 20:
