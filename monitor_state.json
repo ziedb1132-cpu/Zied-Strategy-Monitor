@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "idle",
+  "running": false,
+  "strategy_id": null,
+  "strategy_name": null,
+  "symbol": null,
+  "timeframe": null,
+  "started_at": null,
+  "ends_at": null,
+  "updated_at": null,
+  "buy_now": null,
+  "buy_at": null,
+  "sl": null,
+  "tp": null,
+  "note": "No monitoring session has been started yet. Paper monitoring only; no real orders."
+}
