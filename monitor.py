@@ -311,10 +311,12 @@ def process_tick(state: dict[str, Any], frame: pd.DataFrame, price: float,
                 "paper tracking only."
             )
 
-    if not state.get("active_signal") and result["buy_signal"]:
+    if result["buy_signal"]:
         candle_ms = result["candle_ms"]
-        if candle_ms != state.get("last_signal_candle_ms"):
+        is_new_signal_candle = candle_ms != state.get("last_signal_candle_ms")
+        if is_new_signal_candle:
             state["last_signal_candle_ms"] = candle_ms
+        if not state.get("active_signal") and is_new_signal_candle:
             if result["atr"] > 0 and result["entry_reference"] > 0:
                 entry = float(result["entry_reference"])
                 atr = float(result["atr"])
