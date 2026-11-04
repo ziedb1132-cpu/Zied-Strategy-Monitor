@@ -24,6 +24,10 @@ MEMORY_URL = (
     "https://raw.githubusercontent.com/ziedb1132-cpu/"
     "Zied-Strategy-Lab/main/data/lab_memory.json"
 )
+SUMMARY_URL = (
+    "https://raw.githubusercontent.com/ziedb1132-cpu/"
+    "Zied-Strategy-Lab/main/data/dashboard_summary.json"
+)
 OKX_URL = "https://www.okx.com/api/v5"
 SUPPORTED_BARS = {"5m", "15m", "30m", "1H", "4H", "1D"}
 RUN_SECONDS = 5 * 60 * 60
@@ -61,11 +65,47 @@ def http_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
     raise RuntimeError(f"Request failed: {last_error}") from last_error
 
 
-def strategy_id_from_choice(choice: str) -> str:
-    match = re.match(r"^([0-9a-f]{12})", (choice or "").strip(), re.I)
+def resolve_strategy_choice(choice: str) -> dict[str, Any]:
+    """Resolve a live rank slot against the latest HTML-equivalent top-20 list."""
+    value = (choice or "").strip()
+    rank_match = re.fullmatch(r"TOP[_-]?(\\d{1,2})", value, re.I)
+    if rank_match:
+        rank = int(rank_match.group(1))
+        if not 1 <= rank <= 20:
+            raise ValueError("Strategy rank must be between TOP_1 and TOP_20.")
+        summary = http_json(SUMMARY_URL)
+        strategies = [
+            item for item in (summary.get("strategies") or [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        strategies.sort(
+            key=lambda item: (
+                float(item.get("rating", 0.0)),
+                float(item.get("test_net_total_return", 0.0)),
+                float(item.get("test_profit_factor", 0.0)),
+            ),
+            reverse=True,
+        )
+        if len(strategies) < rank:
+            raise ValueError(
+                f"Strategy Lab currently publishes only {len(strategies)} qualified "
+                f"strategies in its live top-20 list; TOP_{rank} is not available yet."
+            )
+        selected = strategies[rank - 1]
+        return {
+            "id": str(selected["id"]).lower(),
+            "name": str(selected.get("name") or selected["id"]),
+            "rating": float(selected.get("rating", 0.0)),
+            "rank": rank,
+            "ranking_cycle": int(summary.get("cycle", 0)),
+            "ranking_updated_at": str(summary.get("updated_at") or ""),
+        }
+
+    match = re.match(r"^([0-9a-f]{12})", value, re.I)
     if not match:
-        raise ValueError("Choose a strategy from the Strategy dropdown in GitHub Actions.")
-    return match.group(1).lower()
+        raise ValueError("Choose a live rank from TOP_1 to TOP_20.")
+    return {"id": match.group(1).lower(), "name": value, "rating": None,
+            "rank": None, "ranking_cycle": None, "ranking_updated_at": None}
 
 
 def load_candidate(strategy_id: str, requested_bar: str) -> dict[str, Any]:
@@ -344,16 +384,36 @@ def process_tick(state: dict[str, Any], frame: pd.DataFrame, price: float,
 
 
 def run_monitor(strategy_choice: str, bar: str, inst_id: str) -> None:
-    strategy_id = strategy_id_from_choice(strategy_choice)
+    selected = resolve_strategy_choice(strategy_choice)
+    strategy_id = selected["id"]
     if bar != "AUTO" and bar not in SUPPORTED_BARS:
         raise ValueError(f"Unsupported timeframe {bar}.")
     inst_id = inst_id.strip().upper()
     if not re.fullmatch(r"[A-Z0-9]+-USDT", inst_id):
         raise ValueError("Instrument must be an OKX Spot USDT pair, e.g. SOL-USDT.")
-    strategy = load_candidate(strategy_id, bar)
+    old_state = read_state()
+    # Never abandon an open paper signal merely because the live ranking changed.
+    if old_state.get("active_signal") and old_state.get("strategy_id"):
+        active_id = str(old_state["strategy_id"]).lower()
+        active_strategy = load_candidate(active_id, "AUTO")
+        selected = {
+            "id": active_id,
+            "name": str(old_state.get("strategy_name") or active_id),
+            "rating": old_state.get("strategy_rating"),
+            "rank": old_state.get("strategy_rank"),
+            "ranking_cycle": old_state.get("ranking_cycle"),
+            "ranking_updated_at": old_state.get("ranking_updated_at"),
+        }
+        strategy = active_strategy
+    else:
+        strategy = load_candidate(strategy_id, bar)
     bar = strategy["bar"]
-    strategy_name = strategy_choice.split(" — ", 1)[-1].strip() if " — " in strategy_choice else strategy_id
-    state = start_or_resume_state(read_state(), strategy, strategy_name, inst_id, bar)
+    strategy_name = selected["name"]
+    state = start_or_resume_state(old_state, strategy, strategy_name, inst_id, bar)
+    state["strategy_rating"] = selected.get("rating")
+    state["strategy_rank"] = selected.get("rank")
+    state["ranking_cycle"] = selected.get("ranking_cycle")
+    state["ranking_updated_at"] = selected.get("ranking_updated_at")
     save_state(state)
     git_publish()
 
