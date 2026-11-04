@@ -339,11 +339,46 @@ def process_tick(state: dict[str, Any], frame: pd.DataFrame, price: float,
         elif age_bars >= int(strategy["holding_bars"]):
             exit_reason = "TIMEOUT"
         if exit_reason:
+            entry_price = float(state.get("buy_at") or 0.0)
+            exit_price = float(price)
+            gross_pct = ((exit_price / entry_price) - 1.0) * 100.0 if entry_price > 0 else 0.0
+            # Approximate round-trip spot fees: 0.1% entry + 0.1% exit.
+            net_pct = gross_pct - 0.20
+            state["trade_count"] = int(state.get("trade_count", 0)) + 1
+            state["realized_net_return_pct"] = float(state.get("realized_net_return_pct", 0.0)) + net_pct
+            state["closed_trades"] = list(state.get("closed_trades", []))
+            state["closed_trades"].append({
+                "opened_at": state.get("signal_opened_at"),
+                "closed_at": iso(now),
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "exit_reason": exit_reason,
+                "gross_return_pct": round(gross_pct, 6),
+                "net_return_pct": round(net_pct, 6),
+            })
+            state["closed_trades"] = state["closed_trades"][-500:]
+            if exit_reason == "TP":
+                state["tp_count"] = int(state.get("tp_count", 0)) + 1
+            elif exit_reason == "SL":
+                state["sl_count"] = int(state.get("sl_count", 0)) + 1
+            else:
+                state["timeout_count"] = int(state.get("timeout_count", 0)) + 1
+            if net_pct > 0:
+                state["winning_trades"] = int(state.get("winning_trades", 0)) + 1
+                state["gross_profit_pct"] = float(state.get("gross_profit_pct", 0.0)) + net_pct
+            elif net_pct < 0:
+                state["losing_trades"] = int(state.get("losing_trades", 0)) + 1
+                state["gross_loss_pct"] = float(state.get("gross_loss_pct", 0.0)) + abs(net_pct)
+            gross_profit = float(state.get("gross_profit_pct", 0.0))
+            gross_loss = float(state.get("gross_loss_pct", 0.0))
+            state["profit_factor"] = round(gross_profit / gross_loss, 4) if gross_loss > 0 else (None if gross_profit == 0 else "∞")
+            state["last_exit_price"] = exit_price
+            state["last_trade_net_return_pct"] = round(net_pct, 4)
             state["active_signal"] = False
             state["signal_status"] = exit_reason
             state["last_exit_reason"] = exit_reason
             state["last_exit_at"] = iso(now)
-            state["note"] = f"Last paper signal closed by {exit_reason}. Waiting for the next BUY signal."
+            state["note"] = f"Last paper signal closed by {exit_reason} · net {net_pct:+.2f}% after estimated fees."
             event = True
         else:
             state["signal_status"] = "ACTIVE"
@@ -411,9 +446,28 @@ def run_monitor(strategy_choice: str, bar: str, inst_id: str) -> None:
     strategy_name = selected["name"]
     state = start_or_resume_state(old_state, strategy, strategy_name, inst_id, bar)
     state["strategy_rating"] = selected.get("rating")
+    state.setdefault("trade_count", 0)
+    state.setdefault("tp_count", 0)
+    state.setdefault("sl_count", 0)
+    state.setdefault("timeout_count", 0)
+    state.setdefault("winning_trades", 0)
+    state.setdefault("losing_trades", 0)
+    state.setdefault("gross_profit_pct", 0.0)
+    state.setdefault("gross_loss_pct", 0.0)
+    state.setdefault("profit_factor", None)
+    state.setdefault("realized_net_return_pct", 0.0)
     state["strategy_rank"] = selected.get("rank")
     state["ranking_cycle"] = selected.get("ranking_cycle")
     state["ranking_updated_at"] = selected.get("ranking_updated_at")
+    # Fetch and publish a market price before the first page render.
+    try:
+        _, initial_price = fetch_market(inst_id, bar)
+        state["buy_now"] = initial_price
+        state["price_updated_at"] = iso()
+        state.pop("last_error", None)
+    except Exception as exc:
+        state["last_error"] = str(exc)[:500]
+        state["note"] = f"Waiting for first market-price update: {str(exc)[:250]}"
     save_state(state)
     git_publish()
 
