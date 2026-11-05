@@ -108,8 +108,51 @@ def resolve_strategy_choice(choice: str) -> dict[str, Any]:
             "rank": None, "ranking_cycle": None, "ranking_updated_at": None}
 
 
+def load_memory_payload() -> dict[str, Any]:
+    """Read the lab memory as one file or reassemble its published GitHub chunks."""
+    try:
+        return http_json(MEMORY_URL)
+    except RuntimeError as exc:
+        if "HTTP Error 404" not in str(exc):
+            raise
+
+    manifest_url = (
+        "https://raw.githubusercontent.com/ziedb1132-cpu/"
+        "Zied-Strategy-Lab/main/data/.large_files_manifest.json"
+    )
+    manifest = http_json(manifest_url)
+    file_info = next(
+        (item for item in manifest.get("files", [])
+         if item.get("path") == "data/lab_memory.json"),
+        None,
+    )
+    if not file_info or not file_info.get("parts"):
+        raise RuntimeError(
+            "Strategy Lab lab_memory.json is missing and no chunk manifest was found."
+        )
+
+    chunks: list[str] = []
+    for part_path in file_info["parts"]:
+        part_url = (
+            "https://raw.githubusercontent.com/ziedb1132-cpu/"
+            "Zied-Strategy-Lab/main/" + str(part_path)
+        )
+        request = Request(part_url, headers={
+            "User-Agent": "Zied-Strategy-Monitor/1.0",
+            "Accept": "application/json",
+        })
+        with urlopen(request, timeout=90) as response:
+            chunks.append(response.read().decode("utf-8"))
+    try:
+        return json.loads("".join(chunks))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Could not reconstruct Strategy Lab lab_memory.json from its chunks."
+        ) from exc
+
+
 def load_candidate(strategy_id: str, requested_bar: str) -> dict[str, Any]:
-    payload = http_json(MEMORY_URL)
+    payload = load_memory_payload()
     stats = payload.get("performance", {}).get(strategy_id)
     if not stats:
         raise ValueError(
